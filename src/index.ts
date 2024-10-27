@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { getCurrentDateTime, getMealType } from "./utils";
 
 type Env = {
   AI: Ai;
@@ -9,8 +10,9 @@ type Env = {
 
 const app = new Hono<{ Bindings: Env }>();
 
-const schema = z.object({
-  prompt: z.string(),
+const promptSchema = z.object({
+  userName: z.string().min(1),
+  prompt: z.string().min(1),
 });
 
 const foodItemSchema = z.object({
@@ -20,6 +22,7 @@ const foodItemSchema = z.object({
   carbs: z.string(),
   fat: z.string(),
   amount: z.string(),
+  mealType: z.string().optional(),
 });
 
 const summarySchema = z.object({
@@ -29,227 +32,368 @@ const summarySchema = z.object({
   fat: z.string(),
 });
 
-const aiResponseSchema = z.object({
-  date: z.string(),
-  foods: z.array(foodItemSchema),
-  summary: summarySchema,
-});
+const aiResponseSchema = z.record(
+  z.string(),
+  z.object({
+    foods: z.array(foodItemSchema),
+    summary: summarySchema,
+  })
+);
 
-type DailyIntake = Pick<z.infer<typeof aiResponseSchema>, "date" | "foods">;
+type AiResponse = {
+  [date: string]: {
+    foods: z.infer<typeof foodItemSchema>[];
+    summary: z.infer<typeof summarySchema>;
+  };
+};
+type Prompt = z.infer<typeof promptSchema>;
+type Summary = z.infer<typeof summarySchema>;
+
+type DailyIntake = Pick<AiResponse, "date" | "foods">;
 
 app
-  .post("/", zValidator("json", schema), async (c) => {
-    const { prompt } = c.req.valid("json");
+  .post("/", zValidator("json", promptSchema), async (c) => {
+    try {
+      const { userName, prompt } = c.req.valid("json");
 
-    let prevIntake: DailyIntake[] = [];
-    const cacheKeys = await c.env.cache.list();
-
-    for (const key of cacheKeys.keys) {
-      const value = await c.env.cache.get(key.name);
-      if (value) {
+      // Get previous intake
+      let prevIntake: DailyIntake[] = [];
+      const cacheValue = await c.env.cache.get(userName);
+      if (cacheValue) {
+        const cachedValue: AiResponse = JSON.parse(cacheValue);
         prevIntake.push({
-          date: key.name,
-          foods: JSON.parse(value),
+          date: cachedValue.date,
+          foods: cachedValue.foods,
         });
       }
-    }
 
-    console.log(
-      "prevIntake:",
-      prevIntake.map((item) => ({
-        ...item,
-        foods: JSON.stringify(item.foods, null, 2),
-      }))
-    );
+      const currentDate = new Date().toISOString();
 
-    const currentDate = new Date().toISOString();
-
-    const aiResponse = await c.env.AI.run("@cf/meta/llama-2-7b-chat-int8", {
-      messages: [
-        {
-          role: "system",
-          content: `\
-    Current date is: ${currentDate}
-
-    You are a helpful assistant in nutrient analysis who can help users analyze their nutrient intake.
-
-    User will give you a list of foods they ate.
-
-    You will act like API response, return the following data only in JSON format :
+      const aiResponse = await c.env.AI.run("@cf/meta/llama-2-7b-chat-int8", {
+        messages: [
+          {
+            role: "system",
+            content: `\
+    You are a helpful assistant in nutrient analysis who can help users analyze their foods. 
+    
+    User will give you a list of foods they eat. When formulating your response take carefully consideration of this key details : 
+    1) The foods most likely will be asian cuisine region focused on Malaysian, Singapore, Thailand.
+    2) Make sure to keep track of the date ${currentDate} in Malaysia time zone in ISO format.
+    3) If the date or when is not specified, use current date ${currentDate}.
+    4) You will act like API response, when answering return the following data only in JSON format, for nutrient details dont include the unit :
     {
-      date: string;
-      foods: Array<{
+      ${currentDate}: {
+        foods: Array<{
         name: string;
         calories: string;
         protein: string;
         carbs: string;
         fat: string;
         amount: string;
-      }>;
+      }>,
       summary: {
         calories: string;
         protein: string;
         carbs: string;
         fat: string;
-      };
-    }
-
-    Make sure to keep track of the date in ISO format.
-
-    Previous information of the user intake:${JSON.stringify(prevIntake)}.
-    `,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      raw: true,
-    });
-
-    let responseText: string = "";
-    let parsedResponse: z.infer<typeof aiResponseSchema> = {
-      date: "",
-      foods: [],
-      summary: { calories: "", protein: "", carbs: "", fat: "" },
-    };
-
-    if (aiResponse && typeof aiResponse === "object" && "response" in aiResponse) {
-      // Handle object response
-      responseText = aiResponse.response as string;
-    } else if (aiResponse instanceof ReadableStream) {
-      // Handle stream response
-      const reader = aiResponse.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        responseText += new TextDecoder().decode(value);
       }
-    } else {
-      throw new Error("Unexpected response type from AI");
     }
+  }
+    5) If the intake date is not ${currentDate}, save the date in Malaysia time zone in ISO format without time.
+    6) Previous information of the user intake:${JSON.stringify(prevIntake)}.`,
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        raw: true,
+      });
 
-    try {
-      // Use a regular expression to find the JSON object in the response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No JSON object found in the response");
-      }
+      console.log("aiResponse:", aiResponse);
 
-      const jsonString = jsonMatch[0];
-      const jsonObject = JSON.parse(jsonString);
-      parsedResponse = aiResponseSchema.parse(jsonObject);
+      let responseText: string = "";
+      let parsedResponse: AiResponse = {};
 
-      // Check if the key (date) already exists in the cache
-      const existingData = await c.env.cache.get(parsedResponse.date);
-
-      if (existingData) {
-        // If the key exists, parse the existing data
-        const existingFoods = JSON.parse(existingData);
-
-        // Function to check if a food item already exists
-        const foodExists = (newFood: z.infer<typeof foodItemSchema>) =>
-          existingFoods.some((existingFood: z.infer<typeof foodItemSchema>) =>
-            ["name", "amount", "calories", "protein", "carbs", "fat"].every(
-              (prop) => existingFood[prop as keyof typeof existingFood] === newFood[prop as keyof typeof newFood]
-            )
-          );
-
-        // Filter out duplicates and add only new food items
-        const newFoods = parsedResponse.foods.filter((food) => !foodExists(food));
-        const updatedFoods = [...existingFoods, ...newFoods];
-
-        // Update the cache with the merged foods array
-        await c.env.cache.put(parsedResponse.date, JSON.stringify(updatedFoods));
-        console.log("Updated existing entry in KV", parsedResponse.date);
-
-        // Update the parsedResponse with the merged foods array
-        parsedResponse.foods = updatedFoods;
+      if (aiResponse && typeof aiResponse === "object" && "response" in aiResponse) {
+        // Handle object response
+        responseText = aiResponse.response as string;
+      } else if (aiResponse instanceof ReadableStream) {
+        // Handle stream response
+        const reader = aiResponse.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          responseText += new TextDecoder().decode(value);
+        }
       } else {
-        // If the key doesn't exist, save the new data as before
-        await c.env.cache.put(parsedResponse.date, JSON.stringify(parsedResponse.foods));
-        console.log("Saved new entry to KV", parsedResponse.date);
+        throw new Error("Unexpected response type from AI");
       }
 
-      // Recalculate the summary based on all foods for the day
-      const recalculatedSummary = parsedResponse.foods.reduce(
-        (acc, food) => ({
-          calories: (parseFloat(acc.calories) + parseFloat(food.calories)).toString(),
-          protein: (parseFloat(acc.protein) + parseFloat(food.protein)).toString(),
-          carbs: (parseFloat(acc.carbs) + parseFloat(food.carbs)).toString(),
-          fat: (parseFloat(acc.fat) + parseFloat(food.fat)).toString(),
-        }),
-        { calories: "0", protein: "0", carbs: "0", fat: "0" }
-      );
+      console.log("Starting AI response parsing...");
+      console.log("Raw AI response:", responseText);
 
-      parsedResponse.summary = recalculatedSummary;
-    } catch (error) {
-      console.error("Error parsing AI response:", error);
-      console.error("Problematic responseText:", responseText);
-      throw new Error("Failed to parse AI response");
-    }
+      try {
+        let jsonString = "";
+        let parsingStage = "initial";
 
-    return c.json(parsedResponse);
-  })
-  .get("/summary", async (c) => {
-    let allIntakes: z.infer<typeof aiResponseSchema>[] = [];
-    const cacheKeys = await c.env.cache.list();
-    let overallSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+        console.log("Attempting to parse full response as JSON...");
+        // Try to parse the entire response as JSON first
+        try {
+          JSON.parse(responseText);
+          jsonString = responseText;
+          parsingStage = "full response parsed";
+        } catch (jsonError) {
+          // If parsing the entire response fails, try to extract JSON from various formats
+          parsingStage = "extracting JSON";
 
-    for (const key of cacheKeys.keys) {
-      const value = await c.env.cache.get(key.name);
-      if (value) {
-        const foods: z.infer<typeof foodItemSchema>[] = JSON.parse(value);
-        const dailySummary = foods.reduce(
+          // Look for JSON object in markdown code blocks
+          const codeBlockMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+          if (codeBlockMatch) {
+            const potentialJson = codeBlockMatch[1].trim();
+            try {
+              JSON.parse(potentialJson);
+              jsonString = potentialJson;
+              parsingStage = "code block parsed";
+            } catch (e) {
+              // If parsing fails, continue to the next method
+            }
+          }
+
+          // If still not found, look for JSON object in the entire text
+          if (!jsonString) {
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              jsonString = jsonMatch[0];
+              parsingStage = "JSON extracted from text";
+            }
+          }
+        }
+
+        if (!jsonString) {
+          throw new Error(`No valid JSON object found in the response. Parsing stage: ${parsingStage}`);
+        }
+
+        parsingStage = "parsing extracted JSON";
+        const jsonObject = JSON.parse(jsonString);
+
+        parsingStage = "validating schema";
+        parsedResponse = aiResponseSchema.parse(jsonObject);
+
+        // Get the date from the first (and only) key in the parsed response
+        const intakeDate = Object.keys(parsedResponse)[0];
+        const intakeData = parsedResponse[intakeDate];
+
+        // Check if the key (userName) already exists in the cache
+        const existingData = await c.env.cache.get(userName);
+
+        console.log("existingData:", existingData);
+
+        if (existingData) {
+          try {
+            // If the key exists, parse the existing data
+            const parsedExistingData: AiResponse = JSON.parse(existingData);
+
+            // Check if the intake date exists in the parsed data
+            if (parsedExistingData[intakeDate]) {
+              const existingFoods = parsedExistingData[intakeDate].foods;
+
+              console.log("existingFoods:", existingFoods);
+
+              // Function to check if a food item already exists
+              const foodExists = (newFood: z.infer<typeof foodItemSchema>) =>
+                existingFoods.some((existingFood: z.infer<typeof foodItemSchema>) =>
+                  ["name", "amount", "calories", "protein", "carbs", "fat"].every(
+                    (prop) => existingFood[prop as keyof typeof existingFood] === newFood[prop as keyof typeof newFood]
+                  )
+                );
+
+              // Filter out duplicates and add only new food items
+              const newFoods = intakeData.foods.filter((food) => !foodExists(food));
+              const updatedFoods = [...existingFoods, ...newFoods];
+
+              // Update the cache with the merged foods array
+              await c.env.cache.put(
+                userName,
+                JSON.stringify({
+                  ...parsedExistingData,
+                  [intakeDate]: {
+                    foods: updatedFoods,
+                    summary: intakeData.summary,
+                  },
+                })
+              );
+              console.log("Updated existing entry in KV", userName);
+
+              // Update the parsedResponse with the merged foods array
+              parsedResponse[intakeDate].foods = updatedFoods;
+            } else {
+              // If the intake date doesn't exist, add it to the existing data
+              await c.env.cache.put(
+                userName,
+                JSON.stringify({
+                  ...parsedExistingData,
+                  [intakeDate]: intakeData,
+                })
+              );
+              console.log("Added new date to existing entry in KV", userName);
+            }
+          } catch (parseError) {
+            console.error("Error parsing existing data:", parseError);
+            // If parsing fails, treat it as if there's no existing data
+            await c.env.cache.put(userName, JSON.stringify(parsedResponse));
+            console.log("Replaced corrupted data with new entry in KV", userName);
+          }
+        } else {
+          // If the key doesn't exist, save the new data as before
+          await c.env.cache.put(userName, JSON.stringify(parsedResponse));
+          console.log("Saved new entry to KV", userName);
+        }
+
+        // Recalculate the summary based on all foods for the day
+        const recalculatedSummary = parsedResponse[intakeDate].foods.reduce(
           (acc, food) => ({
-            calories: acc.calories + parseFloat(food.calories),
-            protein: acc.protein + parseFloat(food.protein),
-            carbs: acc.carbs + parseFloat(food.carbs),
-            fat: acc.fat + parseFloat(food.fat),
+            calories: (parseFloat(acc.calories) + parseFloat(food.calories)).toString(),
+            protein: (parseFloat(acc.protein) + parseFloat(food.protein)).toString(),
+            carbs: (parseFloat(acc.carbs) + parseFloat(food.carbs)).toString(),
+            fat: (parseFloat(acc.fat) + parseFloat(food.fat)).toString(),
           }),
-          { calories: 0, protein: 0, carbs: 0, fat: 0 }
+          { calories: "0", protein: "0", carbs: "0", fat: "0" }
         );
 
-        allIntakes.push({
-          date: key.name,
-          foods: foods,
-          summary: {
-            calories: dailySummary.calories.toFixed(2),
-            protein: dailySummary.protein.toFixed(2),
-            carbs: dailySummary.carbs.toFixed(2),
-            fat: dailySummary.fat.toFixed(2),
-          },
-        });
-
-        // Add to overall summary
-        overallSummary.calories += dailySummary.calories;
-        overallSummary.protein += dailySummary.protein;
-        overallSummary.carbs += dailySummary.carbs;
-        overallSummary.fat += dailySummary.fat;
+        parsedResponse[intakeDate].summary = recalculatedSummary;
+      } catch (error: unknown) {
+        console.error("Error parsing AI response:", error);
+        console.error("Problematic responseText:", responseText);
+        if (error instanceof z.ZodError) {
+          console.error("Zod validation errors:", JSON.stringify(error.errors, null, 2));
+        }
+        if (error instanceof Error) {
+          console.error("Error stack:", error.stack);
+          throw new Error(`Failed to parse AI response: ${error.message}`);
+        } else {
+          throw new Error("Failed to parse AI response: Unknown error");
+        }
       }
+
+      console.log("Successfully parsed and validated AI response");
+      console.log("Parsed response:", JSON.stringify(parsedResponse, null, 2));
+
+      return c.json(parsedResponse);
+    } catch (error) {
+      console.error("Error posting intake:", error);
+      return c.json({ error: "Failed to post intake" }, 500);
     }
+  })
+  .get("/summary", async (c) => {
+    try {
+      let allIntakes: AiResponse = {};
+      const cacheKeys = await c.env.cache.list();
+      let overallSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+      let daysCount = 0;
 
-    // Calculate averages for the overall summary
-    const daysCount = allIntakes.length;
-    const averageSummary = {
-      calories: (overallSummary.calories / daysCount).toFixed(2),
-      protein: (overallSummary.protein / daysCount).toFixed(2),
-      carbs: (overallSummary.carbs / daysCount).toFixed(2),
-      fat: (overallSummary.fat / daysCount).toFixed(2),
-    };
+      const currentDate = new Date();
+      const currentYear = currentDate.getUTCFullYear();
+      const currentMonth = currentDate.getUTCMonth();
 
-    return c.json({
-      dailyIntakes: allIntakes,
-      overallSummary: {
-        total: {
-          calories: overallSummary.calories.toFixed(2),
-          protein: overallSummary.protein.toFixed(2),
-          carbs: overallSummary.carbs.toFixed(2),
-          fat: overallSummary.fat.toFixed(2),
+      for (const key of cacheKeys.keys) {
+        const value = await c.env.cache.get(key.name);
+        if (value) {
+          const parsedValue: AiResponse = JSON.parse(value);
+
+          // Filter and process intakes for the current month
+          for (const [date, intakeData] of Object.entries(parsedValue)) {
+            const intakeDate = new Date(date);
+            if (intakeDate.getUTCFullYear() === currentYear && intakeDate.getUTCMonth() === currentMonth) {
+              allIntakes[date] = intakeData;
+              daysCount++;
+
+              // Calculate daily summary and add to overall summary
+              const dailySummary = intakeData.foods.reduce(
+                (acc, food) => ({
+                  calories: acc.calories + parseFloat(food.calories),
+                  protein: acc.protein + parseFloat(food.protein),
+                  carbs: acc.carbs + parseFloat(food.carbs),
+                  fat: acc.fat + parseFloat(food.fat),
+                }),
+                { calories: 0, protein: 0, carbs: 0, fat: 0 }
+              );
+
+              // Add to overall summary
+              overallSummary.calories += dailySummary.calories;
+              overallSummary.protein += dailySummary.protein;
+              overallSummary.carbs += dailySummary.carbs;
+              overallSummary.fat += dailySummary.fat;
+            }
+          }
+        }
+      }
+
+      // Calculate averages for the overall summary
+      const averageSummary = {
+        calories: daysCount > 0 ? (overallSummary.calories / daysCount).toFixed(2) : "0",
+        protein: daysCount > 0 ? (overallSummary.protein / daysCount).toFixed(2) : "0",
+        carbs: daysCount > 0 ? (overallSummary.carbs / daysCount).toFixed(2) : "0",
+        fat: daysCount > 0 ? (overallSummary.fat / daysCount).toFixed(2) : "0",
+      };
+
+      // Prepare the response
+      const response = {
+        month: `${currentYear}-${(currentMonth + 1).toString().padStart(2, "0")}`,
+        dailyIntakes: Object.entries(allIntakes).map(([date, data]) => ({
+          date,
+          foods: data.foods,
+          summary: data.summary,
+        })),
+        overallSummary: {
+          total: {
+            calories: overallSummary.calories.toFixed(2),
+            protein: overallSummary.protein.toFixed(2),
+            carbs: overallSummary.carbs.toFixed(2),
+            fat: overallSummary.fat.toFixed(2),
+          },
+          average: averageSummary,
         },
-        average: averageSummary,
-      },
-    });
+      };
+
+      return c.json(response);
+    } catch (error) {
+      console.error("Error getting summary:", error);
+      return c.json({ error: "Failed to get summary" }, 500);
+    }
+  })
+  .get("/daily_intake/:userName", zValidator("param", z.object({ userName: z.string().min(1) })), async (c) => {
+    try {
+      const { userName } = c.req.valid("param");
+
+      let allIntakes: Array<{ date: string; foods: z.infer<typeof foodItemSchema>[] }> = [];
+
+      const cacheValue = await c.env.cache.get(userName);
+      console.log("cacheValue:", cacheValue);
+      if (cacheValue) {
+        const parsedValue: AiResponse = JSON.parse(cacheValue);
+
+        // Iterate through all dates in the parsed value
+        for (const [intakeDate, intakeData] of Object.entries(parsedValue)) {
+          // Add time and mealType to each food item
+          const foodsWithTimeAndMealType = intakeData.foods.map((food: z.infer<typeof foodItemSchema>) => ({
+            ...food,
+            time: new Date(intakeDate).toISOString(),
+            mealType: food.mealType || getMealType(new Date(intakeDate).toISOString()),
+          }));
+
+          allIntakes.push({
+            date: intakeDate,
+            foods: foodsWithTimeAndMealType,
+          });
+        }
+      }
+
+      return c.json(allIntakes);
+    } catch (error) {
+      console.error("Error getting daily intake:", error);
+      return c.json({ error: "Failed to get daily intake" }, 500);
+    }
   })
   .get("/resetkv", async (c) => {
     const cacheKeys = await c.env.cache.list();
@@ -257,6 +401,10 @@ app
       await c.env.cache.delete(key.name);
     }
     return c.json({ success: true, message: "All data reset" });
+  })
+  .get("/keys", async (c) => {
+    const cacheKeys = await c.env.cache.list();
+    return c.json(cacheKeys.keys);
   })
   .post("/testkv", async (c) => {
     try {
