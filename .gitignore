@@ -35,4 +35,6 @@ lerna-debug.log*
 # wrangler project
 .dev.vars
 .wrangler/
-*.toml
+wrangler.toml
+
+
