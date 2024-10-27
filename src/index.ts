@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { getCurrentDateTime, getMealType } from "./utils";
+import { parseISO, isToday } from "date-fns";
 
 type Env = {
   AI: Ai;
@@ -366,30 +367,36 @@ app
     try {
       const { userName } = c.req.valid("param");
 
-      let allIntakes: Array<{ date: string; foods: z.infer<typeof foodItemSchema>[] }> = [];
+      let dailyIntake: { date: string; foods: z.infer<typeof foodItemSchema>[] } | null = null;
 
       const cacheValue = await c.env.cache.get(userName);
       console.log("cacheValue:", cacheValue);
       if (cacheValue) {
         const parsedValue: AiResponse = JSON.parse(cacheValue);
 
-        // Iterate through all dates in the parsed value
-        for (const [intakeDate, intakeData] of Object.entries(parsedValue)) {
-          // Add time and mealType to each food item
-          const foodsWithTimeAndMealType = intakeData.foods.map((food: z.infer<typeof foodItemSchema>) => ({
-            ...food,
-            time: new Date(intakeDate).toISOString(),
-            mealType: food.mealType || getMealType(new Date(intakeDate).toISOString()),
-          }));
+        // Find the entry for the current date
+        for (const [date, intakeData] of Object.entries(parsedValue)) {
+          if (isToday(parseISO(date))) {
+            // Add mealType to each food item if not present
+            const foodsWithMealType = intakeData.foods.map((food: z.infer<typeof foodItemSchema>) => ({
+              ...food,
+              mealType: food.mealType || getMealType(`${date}T12:00:00Z`),
+            }));
 
-          allIntakes.push({
-            date: intakeDate,
-            foods: foodsWithTimeAndMealType,
-          });
+            dailyIntake = {
+              date,
+              foods: foodsWithMealType,
+            };
+            break;
+          }
         }
       }
 
-      return c.json(allIntakes);
+      if (dailyIntake) {
+        return c.json(dailyIntake);
+      } else {
+        return c.json({ message: `No intake found for today` }, 404);
+      }
     } catch (error) {
       console.error("Error getting daily intake:", error);
       return c.json({ error: "Failed to get daily intake" }, 500);
