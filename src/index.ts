@@ -282,7 +282,7 @@ app
       console.log("Successfully parsed and validated AI response");
       console.log("Parsed response:", JSON.stringify(parsedResponse, null, 2));
 
-      return c.json({ status: 200 });
+      return c.json(parsedResponse);
     } catch (error) {
       console.error("Error posting intake:", error);
       throw c.json({ error: "Failed to post intake" }, 500);
