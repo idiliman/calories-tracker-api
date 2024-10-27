@@ -49,13 +49,15 @@ type AiResponse = {
 };
 type Prompt = z.infer<typeof promptSchema>;
 type Summary = z.infer<typeof summarySchema>;
-
+type FoodItem = z.infer<typeof foodItemSchema>;
 type DailyIntake = Pick<AiResponse, "date" | "foods">;
 
 app
-  .post("/", zValidator("json", promptSchema), async (c) => {
+  .post("/intake", zValidator("json", promptSchema), async (c) => {
     try {
       const { userName, prompt } = c.req.valid("json");
+      console.log(".post ~ prompt:", prompt);
+      console.log(".post ~ userName:", userName);
 
       // Get previous intake
       let prevIntake: DailyIntake[] = [];
@@ -280,10 +282,10 @@ app
       console.log("Successfully parsed and validated AI response");
       console.log("Parsed response:", JSON.stringify(parsedResponse, null, 2));
 
-      return c.json(parsedResponse);
+      return c.json({ status: 200 });
     } catch (error) {
       console.error("Error posting intake:", error);
-      return c.json({ error: "Failed to post intake" }, 500);
+      throw c.json({ error: "Failed to post intake" }, 500);
     }
   })
   .get("/summary", async (c) => {
@@ -338,14 +340,16 @@ app
         fat: daysCount > 0 ? (overallSummary.fat / daysCount).toFixed(2) : "0",
       };
 
-      // Prepare the response
+      // Prepare the response with sorted daily intakes
       const response = {
         month: `${currentYear}-${(currentMonth + 1).toString().padStart(2, "0")}`,
-        dailyIntakes: Object.entries(allIntakes).map(([date, data]) => ({
-          date,
-          foods: data.foods,
-          summary: data.summary,
-        })),
+        dailyIntakes: Object.entries(allIntakes)
+          .map(([date, data]) => ({
+            date,
+            foods: data.foods,
+            summary: data.summary,
+          }))
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
         overallSummary: {
           total: {
             calories: overallSummary.calories.toFixed(2),
@@ -367,39 +371,60 @@ app
     try {
       const { userName } = c.req.valid("param");
 
-      let dailyIntake: { date: string; foods: z.infer<typeof foodItemSchema>[] } | null = null;
+      let dailyIntakes: {
+        date: string;
+        foods: z.infer<typeof foodItemSchema>[];
+        summary: z.infer<typeof summarySchema>;
+      }[] = [];
 
       const cacheValue = await c.env.cache.get(userName);
-      console.log("cacheValue:", cacheValue);
+      console.log("Cache value for user:", userName, cacheValue);
+
       if (cacheValue) {
         const parsedValue: AiResponse = JSON.parse(cacheValue);
+        console.log("Parsed cache value:", parsedValue);
 
-        // Find the entry for the current date
+        const today = new Date();
+        const todayDayOfWeek = today.getDay();
+
         for (const [date, intakeData] of Object.entries(parsedValue)) {
-          if (isToday(parseISO(date))) {
-            // Add mealType to each food item if not present
-            const foodsWithMealType = intakeData.foods.map((food: z.infer<typeof foodItemSchema>) => ({
+          const intakeDate = new Date(date);
+
+          console.log("Comparing days of week:", intakeDate.getDay(), todayDayOfWeek);
+
+          if (intakeDate.getDay() === todayDayOfWeek) {
+            console.log("Found matching day of week:", date);
+            const foodsWithMealType = intakeData.foods.map((food: FoodItem) => ({
               ...food,
               mealType: food.mealType || getMealType(`${date}T12:00:00Z`),
             }));
 
-            dailyIntake = {
-              date,
+            dailyIntakes.push({
+              date: date, // Keep the original date
               foods: foodsWithMealType,
-            };
-            break;
+              summary: intakeData.summary,
+            });
           }
         }
+
+        // Sort dailyIntakes by date and time in descending order (latest first)
+        dailyIntakes.sort((a, b) => {
+          const dateA = new Date(a.date).getTime();
+          const dateB = new Date(b.date).getTime();
+          return dateB - dateA;
+        });
       }
 
-      if (dailyIntake) {
-        return c.json(dailyIntake);
+      if (dailyIntakes.length > 0) {
+        console.log("Returning sorted daily intakes:", dailyIntakes);
+        return c.json(dailyIntakes);
       } else {
-        return c.json({ message: `No intake found for today` }, 404);
+        console.log("No intakes found for today's day of the week");
+        return c.json({ message: `No intakes found for today's day of the week` }, 404);
       }
     } catch (error) {
-      console.error("Error getting daily intake:", error);
-      return c.json({ error: "Failed to get daily intake" }, 500);
+      console.error("Error getting daily intakes:", error);
+      return c.json({ error: "Failed to get daily intakes" }, 500);
     }
   })
   .get("/resetkv", async (c) => {
