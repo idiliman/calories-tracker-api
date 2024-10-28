@@ -10,7 +10,8 @@ export function getMealType(time: string): string {
     return `On ${date.toLocaleDateString("en-US", { weekday: "long" })}`;
   }
 
-  const hour = date.getHours();
+  // Convert UTC to Malaysia time (UTC+8)
+  const hour = (date.getUTCHours() + 8) % 24;
 
   if (hour >= 5 && hour < 11) {
     return "Breakfast";
