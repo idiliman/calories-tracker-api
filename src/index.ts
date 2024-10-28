@@ -396,7 +396,7 @@ app
             console.log("Found matching day of week:", date);
             const foodsWithMealType = intakeData.foods.map((food: FoodItem) => ({
               ...food,
-              mealType: food.mealType || getMealType(`${date}T12:00:00Z`),
+              mealType: food.mealType || getMealType(date),
             }));
 
             dailyIntakes.push({
