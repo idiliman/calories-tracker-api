@@ -288,10 +288,12 @@ app
       throw c.json({ error: "Failed to post intake" }, 500);
     }
   })
-  .get("/summary", async (c) => {
+  .get("/summary/:userName", zValidator("param", z.object({ userName: z.string().min(1) })), async (c) => {
     try {
+      const { userName } = c.req.valid("param");
+
       let allIntakes: AiResponse = {};
-      const cacheKeys = await c.env.cache.list();
+
       let overallSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
       let daysCount = 0;
 
@@ -299,35 +301,33 @@ app
       const currentYear = currentDate.getUTCFullYear();
       const currentMonth = currentDate.getUTCMonth();
 
-      for (const key of cacheKeys.keys) {
-        const value = await c.env.cache.get(key.name);
-        if (value) {
-          const parsedValue: AiResponse = JSON.parse(value);
+      const value = await c.env.cache.get(userName);
+      if (value) {
+        const parsedValue: AiResponse = JSON.parse(value);
 
-          // Filter and process intakes for the current month
-          for (const [date, intakeData] of Object.entries(parsedValue)) {
-            const intakeDate = new Date(date);
-            if (intakeDate.getUTCFullYear() === currentYear && intakeDate.getUTCMonth() === currentMonth) {
-              allIntakes[date] = intakeData;
-              daysCount++;
+        // Filter and process intakes for the current month
+        for (const [date, intakeData] of Object.entries(parsedValue)) {
+          const intakeDate = new Date(date);
+          if (intakeDate.getUTCFullYear() === currentYear && intakeDate.getUTCMonth() === currentMonth) {
+            allIntakes[date] = intakeData;
+            daysCount++;
 
-              // Calculate daily summary and add to overall summary
-              const dailySummary = intakeData.foods.reduce(
-                (acc, food) => ({
-                  calories: acc.calories + parseFloat(food.calories),
-                  protein: acc.protein + parseFloat(food.protein),
-                  carbs: acc.carbs + parseFloat(food.carbs),
-                  fat: acc.fat + parseFloat(food.fat),
-                }),
-                { calories: 0, protein: 0, carbs: 0, fat: 0 }
-              );
+            // Calculate daily summary and add to overall summary
+            const dailySummary = intakeData.foods.reduce(
+              (acc, food) => ({
+                calories: acc.calories + parseFloat(food.calories),
+                protein: acc.protein + parseFloat(food.protein),
+                carbs: acc.carbs + parseFloat(food.carbs),
+                fat: acc.fat + parseFloat(food.fat),
+              }),
+              { calories: 0, protein: 0, carbs: 0, fat: 0 }
+            );
 
-              // Add to overall summary
-              overallSummary.calories += dailySummary.calories;
-              overallSummary.protein += dailySummary.protein;
-              overallSummary.carbs += dailySummary.carbs;
-              overallSummary.fat += dailySummary.fat;
-            }
+            // Add to overall summary
+            overallSummary.calories += dailySummary.calories;
+            overallSummary.protein += dailySummary.protein;
+            overallSummary.carbs += dailySummary.carbs;
+            overallSummary.fat += dailySummary.fat;
           }
         }
       }
