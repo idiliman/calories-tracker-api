@@ -56,64 +56,86 @@ app
   .post("/intake", zValidator("json", promptSchema), async (c) => {
     try {
       const { userName, prompt } = c.req.valid("json");
-      console.log(".post ~ prompt:", prompt);
-      console.log(".post ~ userName:", userName);
 
       // Get previous intake
-      let prevIntake: DailyIntake[] = [];
-      const cacheValue = await c.env.cache.get(userName);
-      if (cacheValue) {
-        const cachedValue: AiResponse = JSON.parse(cacheValue);
-        prevIntake.push({
-          date: cachedValue.date,
-          foods: cachedValue.foods,
-        });
-      }
+      // let prevIntake: DailyIntake[] = [];
+      // const cacheValue = await c.env.cache.get(userName);
+      // if (cacheValue) {
+      //   const cachedValue: AiResponse = JSON.parse(cacheValue);
+      //   prevIntake.push({
+      //     date: cachedValue.date,
+      //     foods: cachedValue.foods,
+      //   });
+      // }
 
       const currentDate = new Date().toISOString();
 
-      const aiResponse = await c.env.AI.run("@cf/meta/llama-2-7b-chat-int8", {
+      const aiResponse = await c.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+        // temperature: 0.2,
+        // top_p: 0.9,
+        // frequency_penalty: 0.0,
+        // presence_penalty: 0.0,
         messages: [
           {
             role: "system",
-            content: `\
-    You are a helpful assistant in nutrient analysis who can help users analyze their foods. 
-    
-    User will give you a list of foods they eat. When formulating your response take carefully consideration of this key details : 
-    1) The foods most likely will be asian cuisine region focused on Malaysian, Singapore, Thailand.
-    2) Make sure to keep track of the date ${currentDate} in Malaysia time zone in ISO format.
-    3) If the date or when is not specified, use current date ${currentDate}.
-    4) You will act like API response, when answering return the following data only in JSON format, for nutrient details dont include the unit :
-    {
-      ${currentDate}: {
-        foods: Array<{
-        name: string;
-        calories: string;
-        protein: string;
-        carbs: string;
-        fat: string;
-        amount: string;
-      }>,
-      summary: {
-        calories: string;
-        protein: string;
-        carbs: string;
-        fat: string;
-      }
-    }
-  }
-    5) If the intake date is not ${currentDate}, save the date in Malaysia time zone in ISO format without time.
-    6) Previous information of the user intake:${JSON.stringify(prevIntake)}.`,
+            content: `
+            You are an expert nutritionist assistant specializing in Asian cuisine analysis. Your role is to analyze food intake and provide detailed nutritional information.
+
+            Instructions for processing user input:
+
+            1. REGIONAL EXPERTISE:
+            - Primary focus: Malaysian, Singaporean, and Thai cuisine
+            - Include common local measurement terms (e.g., "bowl", "plate", "piece")
+            - Support both metric (g, ml) and local measurements
+
+            2. INPUT PARSING:
+            - Split multiple food items into separate entries
+            - Format expected: "<quantity> <food item>"
+            - Examples: 
+              * "1 banana"
+              * "2 apples"
+              * "yogurt" (assumes quantity of 1)
+            - Numbers at start of item are treated as quantity
+            - Without number, quantity defaults to 1
+
+            3. DATE HANDLING:
+            - If date not specified, use current date: ${currentDate}
+            - Accept various date formats (e.g., "today", "yesterday", "tomorrow", "DD/MM/YYYY")
+
+            4. RESPONSE FORMAT:
+            - Return a strict JSON object with the following structure  
+            - All numeric values must be strings
+            - No additional text or explanations outside the JSON structure
+            - Ensure all measurements are standardized to grams
+            - Summary should be the mathematical total of all food items
+            {
+              "YYYY-MM-DDTHH:mm:ss.sssZ": {  // ISO 8601 timestamp with UTC+8
+                "foods": [
+                  {
+                    "name": "string (food name)",
+                    "calories": "string (numeric value)",
+                    "protein": "string (grams)",
+                    "carbs": "string (grams)",
+                    "fat": "string (grams)",
+                    "amount": "string (serving size with unit)"
+                  }
+                ],
+                "summary": {
+                  "calories": "string (total calories)",
+                  "protein": "string (total grams)",
+                  "carbs": "string (total grams)",
+                  "fat": "string (total grams)"
+                }
+              }
+            }
+            `,
           },
           {
             role: "user",
             content: prompt,
           },
         ],
-        raw: true,
       });
-
-      console.log("aiResponse:", aiResponse);
 
       let responseText: string = "";
       let parsedResponse: AiResponse = {};
@@ -427,12 +449,10 @@ app
       return c.json({ error: "Failed to get daily intakes" }, 500);
     }
   })
-  .get("/resetkv", async (c) => {
-    const cacheKeys = await c.env.cache.list();
-    for (const key of cacheKeys.keys) {
-      await c.env.cache.delete(key.name);
-    }
-    return c.json({ success: true, message: "All data reset" });
+  .post("/resetkv/:userName", zValidator("param", z.object({ userName: z.string().min(1) })), async (c) => {
+    const { userName } = c.req.valid("param");
+    await c.env.cache.delete(userName);
+    return c.json({ success: true, message: `${userName} data deleted` });
   })
   .get("/keys", async (c) => {
     const cacheKeys = await c.env.cache.list();
