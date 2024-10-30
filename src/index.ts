@@ -70,7 +70,7 @@ app
 
       const currentDate = new Date().toISOString();
 
-      const aiResponse = await c.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      const aiResponse = await c.env.AI.run("@cf/meta/llama-3-8b-instruct-awq", {
         // temperature: 0.2,
         // top_p: 0.9,
         // frequency_penalty: 0.0,
@@ -112,8 +112,8 @@ app
               "YYYY-MM-DDTHH:mm:ss.sssZ": {  // ISO 8601 timestamp with UTC+8
                 "foods": [
                   {
-                    "name": "string (food name)",
-                    "calories": "string (numeric value)",
+                    "name": "string",
+                    "calories": "string",
                     "protein": "string (grams)",
                     "carbs": "string (grams)",
                     "fat": "string (grams)",
@@ -121,10 +121,10 @@ app
                   }
                 ],
                 "summary": {
-                  "calories": "string (total calories)",
-                  "protein": "string (total grams)",
-                  "carbs": "string (total grams)",
-                  "fat": "string (total grams)"
+                  "calories": "string",
+                  "protein": "string",
+                  "carbs": "string",
+                  "fat": "string"
                 }
               }
             }
