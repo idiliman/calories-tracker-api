@@ -518,6 +518,53 @@ app
       console.error("Error saving to KV:", error);
       return c.json({ success: false, message: "Failed to save data to KV" }, 500);
     }
-  });
+  })
+  .delete(
+    "/intake/:userName/:date",
+    zValidator(
+      "param",
+      z.object({
+        userName: z.string().min(1),
+        date: z.string().min(1),
+      })
+    ),
+    async (c) => {
+      try {
+        const { userName, date } = c.req.valid("param");
+
+        // Get existing data
+        const existingData = await c.env.cache.get(userName);
+        if (!existingData) {
+          return c.json({ message: "No data found for user" }, 404);
+        }
+
+        const parsedData: AiResponse = JSON.parse(existingData);
+
+        // Check if the date exists
+        if (!parsedData[date]) {
+          return c.json({ message: "No data found for specified date" }, 404);
+        }
+
+        // Remove the specified date's data
+        delete parsedData[date];
+
+        // If there's still other data, update the KV store
+        if (Object.keys(parsedData).length > 0) {
+          await c.env.cache.put(userName, JSON.stringify(parsedData));
+        } else {
+          // If no data left, delete the entire user entry
+          await c.env.cache.delete(userName);
+        }
+
+        return c.json({
+          success: true,
+          message: `Data for ${userName} on ${date} deleted successfully`,
+        });
+      } catch (error) {
+        console.error("Error deleting intake:", error);
+        return c.json({ error: "Failed to delete intake" }, 500);
+      }
+    }
+  );
 
 export default app;
