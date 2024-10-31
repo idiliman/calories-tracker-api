@@ -1,8 +1,17 @@
+import {
+  LeaderboardUser,
+  LeaderboardScoreSchema,
+  promptSchema,
+  AiResponse,
+  aiResponseSchema,
+  foodItemSchema,
+  summarySchema,
+  FoodItem,
+} from "./types";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { getCurrentDateTime, getMealType } from "./utils";
-import { parseISO, isToday } from "date-fns";
+import { getMealType } from "./utils";
 
 type Env = {
   AI: Ai;
@@ -11,46 +20,40 @@ type Env = {
 
 const app = new Hono<{ Bindings: Env }>();
 
-const promptSchema = z.object({
-  userName: z.string().min(1),
-  prompt: z.string().min(1),
-});
+// Leaderboard endpoints
+// app
+//   .post("/leaderboard/scores", zValidator("json", LeaderboardScoreSchema), async (c) => {
+//     try {
+//       const { username, score } = c.req.valid("json");
+//       const userId = username.toLowerCase();
 
-const foodItemSchema = z.object({
-  name: z.string(),
-  calories: z.string(),
-  protein: z.string(),
-  carbs: z.string(),
-  fat: z.string(),
-  amount: z.string(),
-  mealType: z.string().optional(),
-});
+//       const user: LeaderboardUser = {
+//         id: userId,
+//         username,
+//         score,
+//         lastUpdated: new Date(),
+//       };
 
-const summarySchema = z.object({
-  calories: z.string(),
-  protein: z.string(),
-  carbs: z.string(),
-  fat: z.string(),
-});
+//       // Store in KV
+//       // await c.env.leaderboard.put(userId, JSON.stringify(user));
 
-const aiResponseSchema = z.record(
-  z.string(),
-  z.object({
-    foods: z.array(foodItemSchema),
-    summary: summarySchema,
-  })
-);
+//       // Get updated leaderboard and broadcast
+//       // const leaderboard = await getLeaderboard(c.env.leaderboard);
+//       // io.emit("leaderboard:update", leaderboard);
 
-type AiResponse = {
-  [date: string]: {
-    foods: z.infer<typeof foodItemSchema>[];
-    summary: z.infer<typeof summarySchema>;
-  };
-};
-type Prompt = z.infer<typeof promptSchema>;
-type Summary = z.infer<typeof summarySchema>;
-type FoodItem = z.infer<typeof foodItemSchema>;
-type DailyIntake = Pick<AiResponse, "date" | "foods">;
+//       return c.json(user, 201);
+//     } catch (error) {
+//       return c.json({ error: "Failed to update score" }, 400);
+//     }
+//   })
+//   .get("/leaderboard", async (c) => {
+//     try {
+//       const leaderboard = await getLeaderboard(c.env.leaderboard);
+//       return c.json(leaderboard);
+//     } catch (error) {
+//       return c.json({ error: "Failed to get leaderboard" }, 500);
+//     }
+//   });
 
 app
   .post("/intake", zValidator("json", promptSchema), async (c) => {

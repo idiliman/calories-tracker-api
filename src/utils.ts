@@ -1,3 +1,5 @@
+import { LeaderboardUser } from "./types";
+
 export function getCurrentDateTime(): string {
   return new Date().toISOString();
 }
@@ -24,4 +26,18 @@ export function getMealType(time: string): string {
   } else {
     return "Late Night Snack";
   }
+}
+
+async function getLeaderboard(store: KVNamespace): Promise<LeaderboardUser[]> {
+  const { keys } = await store.list();
+  const users: LeaderboardUser[] = [];
+
+  for (const key of keys) {
+    const userData = await store.get(key.name);
+    if (userData) {
+      users.push(JSON.parse(userData));
+    }
+  }
+
+  return users.sort((a, b) => b.score - a.score).slice(0, 100); // Top 100 users
 }
