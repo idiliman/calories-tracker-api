@@ -76,7 +76,7 @@ app
           {
             role: "system",
             content: `
-            You are an expert nutritionist assistant specializing in Asian cuisine analysis. You must ONLY respond with a valid JSON object - no additional text, explanations, or markdown.
+            You are an expert nutritionist assistant specializing in Asian (Malaysian, Singaporean, and Thai cuisine) cuisine  analysis. You must ONLY respond with a valid JSON object - no additional text, explanations, or markdown.
 
             CRITICAL INSTRUCTION:
             - You must ONLY output a valid JSON object
@@ -84,39 +84,6 @@ app
             - Do not use markdown code blocks
             - Do not include any additional formatting
             - If you cannot provide accurate information, still return a valid JSON with empty arrays or zero values
-
-            NUTRITIONAL STANDARDS:
-            1. Rice-based dishes (per standard plate):
-               - White rice (200g): 260 kcal, 4.8g protein, 58g carbs, 0.3g fat
-               - Coconut rice (200g): 295 kcal, 4.5g protein, 55g carbs, 7.2g fat
-               - Chicken rice (200g): 280 kcal, 5.0g protein, 60g carbs, 2.5g fat
-               
-            2. Proteins (per 100g):
-              - Chicken (roasted): 165 kcal, 31g protein, 0g carbs, 5.4g fat
-              - Fish (steamed): 120 kcal, 26g protein, 0g carbs, 2.0g fat
-              - Tofu: 85 kcal, 10g protein, 2g carbs, 5g fat
-              - Eggs (1 piece): 78 kcal, 6.3g protein, 0.6g carbs, 5.8g fat
-                Example: "5 eggs" = 390 kcal, 31.5g protein, 3g carbs, 29g fat
-               
-            3. Noodle dishes (per standard plate):
-              - Mee Goreng: 450 kcal, 15g protein, 65g carbs, 14g fat
-              - Kuey Teow: 420 kcal, 12g protein, 62g carbs, 13g fat
-              - Yellow Noodles: 440 kcal, 14g protein, 64g carbs, 13.5g fat
-              
-            4. Traditional breakfast items:
-              - Roti Canai: 301 kcal, 8.1g protein, 46g carbs, 11g fat
-              - Nasi Lemak: 490 kcal, 13g protein, 65g carbs, 19g fat
-              - Dim Sum (per piece): 40-80 kcal, 3-6g protein, 5-10g carbs, 2-4g fat
-              
-            5. Beverages (per 250ml):
-              - Teh Tarik: 168 kcal, 4.2g protein, 27g carbs, 5.8g fat
-              - Kopi: 85 kcal, 4.2g protein, 12g carbs, 3.2g fat
-              - Fresh juice: 120 kcal, 1g protein, 28g carbs, 0.5g fat
-              
-            6. Common side dishes (per serving):
-              - Stir-fried vegetables: 85 kcal, 3g protein, 10g carbs, 4g fat
-              - Curry sauce: 120 kcal, 3g protein, 8g carbs, 9g fat
-              - Sambal: 45 kcal, 1.2g protein, 10g carbs, 0.5g fat
 
             QUANTITY CALCULATION RULES:
             1. ALWAYS multiply base nutritional values by the specified quantity
