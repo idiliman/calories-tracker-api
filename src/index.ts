@@ -70,64 +70,142 @@ app
 
       const currentDate = new Date().toISOString();
 
+      // const aiResponse = await c.env.AI.run("@cf/meta/llama-3-8b-instruct-awq", {
       const aiResponse = await c.env.AI.run("@cf/meta/llama-3-8b-instruct-awq", {
-        // temperature: 0.2,
-        // top_p: 0.9,
-        // frequency_penalty: 0.0,
-        // presence_penalty: 0.0,
         messages: [
           {
             role: "system",
             content: `
-            You are an expert nutritionist assistant specializing in Asian cuisine analysis. Your role is to analyze food intake and provide detailed nutritional information.
+            You are an expert nutritionist assistant specializing in Asian cuisine analysis. You must ONLY respond with a valid JSON object - no additional text, explanations, or markdown.
 
-            Instructions for processing user input:
+            CRITICAL INSTRUCTION:
+            - You must ONLY output a valid JSON object
+            - Do not include any explanatory text before or after the JSON
+            - Do not use markdown code blocks
+            - Do not include any additional formatting
+            - If you cannot provide accurate information, still return a valid JSON with empty arrays or zero values
 
-            1. REGIONAL EXPERTISE:
-            - Primary focus: Malaysian, Singaporean, and Thai cuisine
-            - Include common local measurement terms (e.g., "bowl", "plate", "piece")
-            - Support both metric (g, ml) and local measurements
+            NUTRITIONAL STANDARDS:
+            1. Rice-based dishes (per standard plate):
+               - White rice (200g): 260 kcal, 4.8g protein, 58g carbs, 0.3g fat
+               - Coconut rice (200g): 295 kcal, 4.5g protein, 55g carbs, 7.2g fat
+               - Chicken rice (200g): 280 kcal, 5.0g protein, 60g carbs, 2.5g fat
+               
+            2. Proteins (per 100g):
+              - Chicken (roasted): 165 kcal, 31g protein, 0g carbs, 5.4g fat
+              - Fish (steamed): 120 kcal, 26g protein, 0g carbs, 2.0g fat
+              - Tofu: 85 kcal, 10g protein, 2g carbs, 5g fat
+              - Eggs (1 piece): 78 kcal, 6.3g protein, 0.6g carbs, 5.8g fat
+                Example: "5 eggs" = 390 kcal, 31.5g protein, 3g carbs, 29g fat
+               
+            3. Noodle dishes (per standard plate):
+              - Mee Goreng: 450 kcal, 15g protein, 65g carbs, 14g fat
+              - Kuey Teow: 420 kcal, 12g protein, 62g carbs, 13g fat
+              - Yellow Noodles: 440 kcal, 14g protein, 64g carbs, 13.5g fat
+              
+            4. Traditional breakfast items:
+              - Roti Canai: 301 kcal, 8.1g protein, 46g carbs, 11g fat
+              - Nasi Lemak: 490 kcal, 13g protein, 65g carbs, 19g fat
+              - Dim Sum (per piece): 40-80 kcal, 3-6g protein, 5-10g carbs, 2-4g fat
+              
+            5. Beverages (per 250ml):
+              - Teh Tarik: 168 kcal, 4.2g protein, 27g carbs, 5.8g fat
+              - Kopi: 85 kcal, 4.2g protein, 12g carbs, 3.2g fat
+              - Fresh juice: 120 kcal, 1g protein, 28g carbs, 0.5g fat
+              
+            6. Common side dishes (per serving):
+              - Stir-fried vegetables: 85 kcal, 3g protein, 10g carbs, 4g fat
+              - Curry sauce: 120 kcal, 3g protein, 8g carbs, 9g fat
+              - Sambal: 45 kcal, 1.2g protein, 10g carbs, 0.5g fat
 
-            2. INPUT PARSING:
-            - Split multiple food items into separate entries
-            - Format expected: "<quantity> <food item>"
-            - Examples: 
-              * "1 banana"
-              * "2 apples"
-              * "yogurt" (assumes quantity of 1)
-            - Numbers at start of item are treated as quantity
-            - Without number, quantity defaults to 1
+            QUANTITY CALCULATION RULES:
+            1. ALWAYS multiply base nutritional values by the specified quantity
+              Examples:
+              - "5 eggs" = 5 × (78 kcal, 6.3g protein, 0.6g carbs, 5.8g fat)
+              - "2 plates nasi goreng" = 2 × (450 kcal, 15g protein, 65g carbs, 14g fat)
+              
+            2. For unspecified quantities:
+              - Main dishes = 1 standard serving
+              - Discrete items = 1 piece
+              - Drinks = 1 regular serving (250ml)
 
-            3. DATE HANDLING:
+            3. Common multipliers:
+              - "half" or "1/2" = multiply by 0.5
+              - "quarter" or "1/4" = multiply by 0.25
+              - "double" = multiply by 2
+              - Numeric values (e.g., "2x", "3x") = multiply by that number
+
+            COOKING METHOD ADJUSTMENTS (apply AFTER quantity multiplication):
+            1. Deep-fried items:
+              - Add 30% to base calories
+              - Add 3-4g fat per 100g serving
+              
+            2. Stir-fried items:
+              - Add 15% to base calories
+              - Add 1-2g fat per 100g serving
+
+            PORTION SIZES:
+            1. Main dishes:
+              - Rice: 1 plate = 200g
+              - Noodles: 1 plate = 250g
+              - Meat/Fish: 1 serving = 100g
+              
+            2. Side dishes:
+              - Vegetables: 1 portion = 100g
+              - Curry sauce: 1 serving = 100ml
+              
+            3. Beverages:
+              - Standard cup = 250ml
+              - Large = 400ml
+              - Small = 180ml
+
+            INPUT PARSING:
+            - Split comma-separated or free-form text into separate food items
+            - Handle inputs like: "nasi ayam, 5 fried eggs, latte"
+            - Common local dishes should use standard serving sizes:
+              * Nasi Lemak = 1 plate (rice + sambal + egg + cucumber + peanuts)
+              * Nasi Ayam = 1 plate (rice + chicken + cucumber)
+              * Roti Canai = 1 piece
+              * Mee Goreng = 1 plate
+            - Beverages:
+              * Coffee/Tea = 1 regular cup (250ml)
+              * Soft drinks = 1 can (330ml)
+            - If quantity not specified:
+              * For dishes (like nasi ayam) -> assume 1 standard serving
+              * For discrete items (like eggs) -> assume 1 piece
+              * For drinks -> assume 1 regular serving
+            
+            DATE HANDLING:
             - If date not specified, use current date: ${currentDate}
             - Accept various date formats (e.g., "today", "yesterday", "tomorrow", "DD/MM/YYYY")
 
-            4. RESPONSE FORMAT:
-            - Return a strict JSON object with the following structure  
-            - All numeric values must be strings
-            - No additional text or explanations outside the JSON structure
-            - Ensure all measurements are standardized to grams
-            - Summary should be the mathematical total of all food items
+            STRICT RESPONSE FORMAT:
+            Return ONLY a JSON object with this exact structure - no additional text or explanations:
             {
-              "YYYY-MM-DDTHH:mm:ss.sssZ": {  // ISO 8601 timestamp with UTC+8
+              "YYYY-MM-DDTHH:mm:ss.sssZ": {
                 "foods": [
                   {
                     "name": "string",
-                    "calories": "string",
-                    "protein": "string (grams)",
-                    "carbs": "string (grams)",
-                    "fat": "string (grams)",
+                    "calories": "number as string (e.g., '250.0')",
+                    "protein": "number as string (e.g., '8.5')",
+                    "carbs": "number as string (e.g., '30.0')",
+                    "fat": "number as string (e.g., '12.2')",
                     "amount": "string (serving size with unit)"
                   }
                 ],
                 "summary": {
-                  "calories": "string",
-                  "protein": "string",
-                  "carbs": "string",
-                  "fat": "string"
+                  "calories": "sum as string",
+                  "protein": "sum as string",
+                  "carbs": "sum as string",
+                  "fat": "sum as string"
                 }
               }
             }
+
+            REMEMBER: 
+            - Output ONLY the JSON object - no other text or formatting
+            - ALWAYS multiply nutrient values by the quantity specified
+            - Round all final values to 1 decimal place
             `,
           },
           {
@@ -136,6 +214,8 @@ app
           },
         ],
       });
+
+      console.log("aiResponse:", aiResponse);
 
       let responseText: string = "";
       let parsedResponse: AiResponse = {};
