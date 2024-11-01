@@ -11,7 +11,7 @@ import {
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { getMealType } from "./utils";
+import { getLeaderboard, getMealType } from "./utils";
 
 type Env = {
   AI: Ai;
@@ -20,40 +20,7 @@ type Env = {
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Leaderboard endpoints
-// app
-//   .post("/leaderboard/scores", zValidator("json", LeaderboardScoreSchema), async (c) => {
-//     try {
-//       const { username, score } = c.req.valid("json");
-//       const userId = username.toLowerCase();
-
-//       const user: LeaderboardUser = {
-//         id: userId,
-//         username,
-//         score,
-//         lastUpdated: new Date(),
-//       };
-
-//       // Store in KV
-//       // await c.env.leaderboard.put(userId, JSON.stringify(user));
-
-//       // Get updated leaderboard and broadcast
-//       // const leaderboard = await getLeaderboard(c.env.leaderboard);
-//       // io.emit("leaderboard:update", leaderboard);
-
-//       return c.json(user, 201);
-//     } catch (error) {
-//       return c.json({ error: "Failed to update score" }, 400);
-//     }
-//   })
-//   .get("/leaderboard", async (c) => {
-//     try {
-//       const leaderboard = await getLeaderboard(c.env.leaderboard);
-//       return c.json(leaderboard);
-//     } catch (error) {
-//       return c.json({ error: "Failed to get leaderboard" }, 500);
-//     }
-//   });
+const connectedClients = new Set<WebSocket>();
 
 app
   .post("/intake", zValidator("json", promptSchema), async (c) => {
@@ -568,6 +535,105 @@ app
         return c.json({ error: "Failed to delete intake" }, 500);
       }
     }
-  );
+  )
+  .get("/leaderboard", async (c) => {
+    try {
+      // Get current date in ISO format
+      const currentDate = new Date().toISOString();
+      const cacheKeys = await c.env.cache.list();
+
+      // Array to store user calorie data
+      const userCalories: Array<{
+        username: string;
+        calories: number;
+      }> = [];
+
+      const maskUsername = (username: string) => {
+        if (username.length <= 4) {
+          return "*".repeat(username.length);
+        }
+        return username.slice(0, -4) + "****";
+      };
+
+      // Process each user's data
+      for (const { name: userName } of cacheKeys.keys) {
+        const value = await c.env.cache.get(userName);
+        if (value) {
+          const parsedValue: AiResponse = JSON.parse(value);
+          let totalCalories = 0;
+
+          // Find all intakes for today and sum up calories
+          for (const [date, intakeData] of Object.entries(parsedValue)) {
+            const intakeDate = new Date(date);
+            const today = new Date(currentDate);
+
+            if (
+              intakeDate.getUTCFullYear() === today.getUTCFullYear() &&
+              intakeDate.getUTCMonth() === today.getUTCMonth() &&
+              intakeDate.getUTCDate() === today.getUTCDate()
+            ) {
+              // Sum up calories from all foods for this entry
+              const entryCalories = intakeData.foods.reduce((sum, food) => sum + parseFloat(food.calories), 0);
+              totalCalories += entryCalories;
+            }
+          }
+
+          // Only add to leaderboard if user has calories for today
+          if (totalCalories > 0) {
+            userCalories.push({
+              username: maskUsername(userName),
+              calories: totalCalories,
+            });
+          }
+        }
+      }
+
+      // Sort by calories in descending order and take top 5
+      const leaderboard = userCalories
+        .sort((a, b) => b.calories - a.calories)
+        .slice(0, 5)
+        .map((entry, index) => ({
+          rank: index + 1,
+          username: entry.username,
+          calories: entry.calories.toFixed(1),
+        }));
+
+      return c.json(leaderboard);
+    } catch (error) {
+      console.error("Error getting leaderboard:", error);
+      return c.json({ error: "Failed to get leaderboard" }, 500);
+    }
+  })
+  .get("/socket", async (c) => {
+    const upgradeHeader = c.req.header("Upgrade");
+    if (!upgradeHeader || upgradeHeader !== "websocket") {
+      return c.json({ error: "Expected Upgrade: websocket" }, 426);
+    }
+
+    const webSocketPair = new WebSocketPair();
+    const [client, server] = Object.values(webSocketPair);
+
+    let count = 0;
+
+    server.accept();
+
+    // Add to connected clients when connection opens
+    connectedClients.add(server);
+
+    server.addEventListener("close", () => {
+      // Remove from connected clients when connection closes
+      connectedClients.delete(server);
+    });
+
+    server.addEventListener("message", (event) => {
+      console.log(event.data);
+      server.send(event.data);
+    });
+
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+    });
+  });
 
 export default app;

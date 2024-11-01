@@ -28,7 +28,7 @@ export function getMealType(time: string): string {
   }
 }
 
-async function getLeaderboard(store: KVNamespace): Promise<LeaderboardUser[]> {
+export async function getLeaderboard(store: KVNamespace): Promise<LeaderboardUser[]> {
   const { keys } = await store.list();
   const users: LeaderboardUser[] = [];
 
