@@ -12,15 +12,31 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { getLeaderboard, getMealType } from "./utils";
+import { WebSocketHandler } from "./websocket_handler";
 
 type Env = {
   AI: Ai;
   cache: KVNamespace;
+  SECRET_PASSWORD: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
 
-const connectedClients = new Set<WebSocket>();
+// Middleware
+app.use("*", async (c, next) => {
+  const secretPassword = c.req.header("SECRET_PASSWORD");
+
+  console.log("secretPassword:", secretPassword);
+  console.log("c.env.SECRET_PASSWORD:", c.env.SECRET_PASSWORD);
+
+  if (secretPassword !== c.env.SECRET_PASSWORD) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  await next();
+});
+
+let wsHandler: WebSocketHandler | null = null;
 
 app
   .post("/intake", zValidator("json", promptSchema), async (c) => {
@@ -605,35 +621,30 @@ app
     }
   })
   .get("/socket", async (c) => {
-    const upgradeHeader = c.req.header("Upgrade");
-    if (!upgradeHeader || upgradeHeader !== "websocket") {
-      return c.json({ error: "Expected Upgrade: websocket" }, 426);
+    if (!wsHandler) {
+      wsHandler = new WebSocketHandler(c.env.cache);
     }
-
-    const webSocketPair = new WebSocketPair();
-    const [client, server] = Object.values(webSocketPair);
-
-    let count = 0;
-
-    server.accept();
-
-    // Add to connected clients when connection opens
-    connectedClients.add(server);
-
-    server.addEventListener("close", () => {
-      // Remove from connected clients when connection closes
-      connectedClients.delete(server);
-    });
-
-    server.addEventListener("message", (event) => {
-      console.log(event.data);
-      server.send(event.data);
-    });
-
-    return new Response(null, {
-      status: 101,
-      webSocket: client,
-    });
+    return wsHandler.fetch(c.req.raw);
+  })
+  .post("/broadcast", async (c) => {
+    if (!wsHandler) {
+      wsHandler = new WebSocketHandler(c.env.cache);
+    }
+    return wsHandler.fetch(c.req.raw);
   });
+// .post("/notify", async (c) => {
+//   const { clientId, message } = await c.req.json();
+
+//   // const sent = sendToClient(clientId, {
+//   //   type: "notification",
+//   //   message,
+//   // });
+
+//   if (sent) {
+//     return c.json({ success: true });
+//   } else {
+//     return c.json({ success: false, error: "Client not found" }, 404);
+//   }
+// });
 
 export default app;
