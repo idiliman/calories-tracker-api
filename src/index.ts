@@ -347,27 +347,32 @@ app
     try {
       const { userName } = c.req.valid("param");
 
-      let allIntakes: AiResponse = {};
-
-      let overallSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
-      let daysCount = 0;
-
       const currentDate = new Date();
       const currentYear = currentDate.getUTCFullYear();
       const currentMonth = currentDate.getUTCMonth();
 
+      // Initialize variables
+      let overallSummary = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+      let daysCount = 0;
+      let allIntakes: AiResponse = {};
+
       const value = await c.env.cache.get(userName);
+
       if (value) {
         const parsedValue: AiResponse = JSON.parse(value);
 
         // Filter and process intakes for the current month
-        for (const [date, intakeData] of Object.entries(parsedValue)) {
+        Object.entries(parsedValue).forEach(([date, intakeData]) => {
           const intakeDate = new Date(date);
           if (intakeDate.getUTCFullYear() === currentYear && intakeDate.getUTCMonth() === currentMonth) {
-            allIntakes[date] = intakeData;
+            // Properly add the intake data to allIntakes
+            allIntakes[date] = {
+              foods: intakeData.foods,
+              summary: intakeData.summary,
+            };
             daysCount++;
 
-            // Calculate daily summary and add to overall summary
+            // Calculate summary from foods for this day
             const dailySummary = intakeData.foods.reduce(
               (acc, food) => ({
                 calories: acc.calories + parseFloat(food.calories),
@@ -384,33 +389,46 @@ app
             overallSummary.carbs += dailySummary.carbs;
             overallSummary.fat += dailySummary.fat;
           }
-        }
+        });
       }
 
       // Calculate averages for the overall summary
       const averageSummary = {
-        calories: daysCount > 0 ? (overallSummary.calories / daysCount).toFixed(2) : "0",
-        protein: daysCount > 0 ? (overallSummary.protein / daysCount).toFixed(2) : "0",
-        carbs: daysCount > 0 ? (overallSummary.carbs / daysCount).toFixed(2) : "0",
-        fat: daysCount > 0 ? (overallSummary.fat / daysCount).toFixed(2) : "0",
+        calories: daysCount > 0 ? (overallSummary.calories / daysCount).toFixed(1) : "0",
+        protein: daysCount > 0 ? (overallSummary.protein / daysCount).toFixed(1) : "0",
+        carbs: daysCount > 0 ? (overallSummary.carbs / daysCount).toFixed(1) : "0",
+        fat: daysCount > 0 ? (overallSummary.fat / daysCount).toFixed(1) : "0",
       };
 
       // Prepare the response with sorted daily intakes
       const response = {
         month: `${currentYear}-${(currentMonth + 1).toString().padStart(2, "0")}`,
         dailyIntakes: Object.entries(allIntakes)
-          .map(([date, data]) => ({
-            date,
-            foods: data.foods,
-            summary: data.summary,
-          }))
+          .map(([date, data]) => {
+            // Recalculate summary for each day based on foods
+            const recalculatedSummary = data.foods.reduce(
+              (acc, food) => ({
+                calories: (parseFloat(acc.calories) + parseFloat(food.calories)).toFixed(1),
+                protein: (parseFloat(acc.protein) + parseFloat(food.protein)).toFixed(1),
+                carbs: (parseFloat(acc.carbs) + parseFloat(food.carbs)).toFixed(1),
+                fat: (parseFloat(acc.fat) + parseFloat(food.fat)).toFixed(1),
+              }),
+              { calories: "0", protein: "0", carbs: "0", fat: "0" }
+            );
+
+            return {
+              date,
+              foods: data.foods,
+              summary: recalculatedSummary,
+            };
+          })
           .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
         overallSummary: {
           total: {
-            calories: overallSummary.calories.toFixed(2),
-            protein: overallSummary.protein.toFixed(2),
-            carbs: overallSummary.carbs.toFixed(2),
-            fat: overallSummary.fat.toFixed(2),
+            calories: overallSummary.calories.toFixed(1),
+            protein: overallSummary.protein.toFixed(1),
+            carbs: overallSummary.carbs.toFixed(1),
+            fat: overallSummary.fat.toFixed(1),
           },
           average: averageSummary,
         },
